@@ -1,0 +1,7 @@
+*.o
+*.o_p
+*.hi
+dist
+*.swp
+cabal-dev/
+.DS_Store
