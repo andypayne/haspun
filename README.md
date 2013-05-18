@@ -1,6 +1,6 @@
 # Haspun
 
-Haspun is a (less than) bare bones web server written in Haskell.
+Haspun is a less than bare bones web server written in Haskell.
 
 I wrote this around 2009 and recently cleaned it up slightly to be compatible with the latest version of GHC.
 
