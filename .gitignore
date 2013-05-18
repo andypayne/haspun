@@ -1,7 +1,9 @@
-*.o
-*.o_p
-*.hi
 dist
-*.swp
+cabal-dev
+*.o
+*.hi
+*.chi
+*.chs.h
+.virthualenv
 cabal-dev/
 .DS_Store
