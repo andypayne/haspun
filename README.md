@@ -36,6 +36,7 @@ Copyright © 2013 Andy Payne
 Distributed under the BSD 3 clause license:
 
 Copyright (c) 2013, Andy Payne
+
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
