@@ -14,12 +14,14 @@ $ ghc haspun.hs
 
 ## Usage
 
+```
 haspun
   -V       --version      show version number
   -h       --help         show usage
   -c FILE  --config=FILE  set configuration file (not implemented)
   -d DIR   --docroot=DIR  set doc root
   -p PORT  --port=PORT    set port
+```
 
 Specify a port and a document root and you're off.
 
