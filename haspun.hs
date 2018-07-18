@@ -1,8 +1,11 @@
-import Network
+import Network.Socket
 import System.IO
 import Control.Exception
 import Control.Concurrent
-import System.Time
+-- import System.Time
+-- import Data.Time.Clock
+-- import Data.Time.Clock.POSIX
+import Data.Time
 import System.Environment
 import System.Directory (doesFileExist)
 import qualified Data.ByteString.Lazy.Char8 as BS (readFile, pack, unpack, length)
@@ -21,16 +24,8 @@ zipFile inFile = do inFileContents <- BS.readFile inFile
 zipString inString = compress inString
 
 
--- Perform "op" on ClockTime
-applyTimeOp :: (Integer -> Integer -> Integer) -> ClockTime -> Integer -> ClockTime
-applyTimeOp op (TOD sec _) i = TOD (sec `op` i) 0
-
-timeFrom = applyTimeOp (+)
-timeDiff = applyTimeOp (-)
-
-
 logRequest retCode req cli = do
-  now <- getClockTime
+  now <- getCurrentTime
   putStrLn $ "(" ++ cli ++ ") [" ++ show now ++ "][" ++ retCode ++ "]: " ++ req
 
 
@@ -59,11 +54,14 @@ headersToStr hh = unlines $ map joinDict hh
                    where joinDict (k, v) = k ++ ": " ++ v
 
 
-thServer :: Options -> IO ()
-thServer opts = bracket
-                (listenOn $ PortNumber (fromIntegral (listenPort opts)))
-                (sClose)
-                (loop)
+thServer :: Options -> Socket -> IO ()
+thServer opts sock = do
+                -- setSocketOption sock ReuseAddr 1
+                bind sock (SockAddrInet (fromIntegral (listenPort opts)) iNADDR_ANY)
+                listen sock 2
+                -- (listen $ PortNumber (fromIntegral (listenPort opts)))
+                -- (sClose)
+                (loop sock)
     where loop sock = accept sock >>= handle >> loop sock
           handle (h, n, p) = forkIO (serveThread (docRoot opts) h n >> hClose h)
 
@@ -102,13 +100,16 @@ serveThread documentRoot h n = do
 
 putHeader :: Handle -> String -> String -> Int64 -> IO ()
 putHeader h retCode contentType fileSize = do
-  now <- getClockTime
+  -- now <- getClockTime
+  now <- getCurrentTime
   hPutStrLn h $ "HTTP/1.1 " ++ retCode
   hPutStrLn h "Cache-Control: private, max-age=0"
   hPutStrLn h "Content-Encoding: gzip"
   hPutStrLn h $ "Date: " ++ show now
   -- TODO: Expires header - hardcoded at 1 year from now
-  hPutStrLn h $ "Expires: " ++ show (timeFrom now (60*60*24*365))
+  -- hPutStrLn h $ "Expires: " ++ show (timeFrom now (60*60*24*365))
+  --  parseTimeOrError True defaultTimeLocale "%Y-%M-%d" (show (addDays 365 (utctDay d))) ::UTCTime
+  hPutStrLn h $ "Expires: " ++ show (parseTimeOrError True defaultTimeLocale "%Y-%M-%d" (show (addDays 365 (utctDay now))) ::UTCTime)
   hPutStrLn h $ contentType
   hPutStrLn h "Accept-Ranges: bytes"
   hPutStrLn h "Server: Haspun"
@@ -125,7 +126,8 @@ serveFile h documentRoot filePath = do
 
 main = do
   opts <- setConfig
+  sock <- socket AF_INET Stream 0
   putStrLn $ "Document Root:  " ++ (docRoot opts)
   putStrLn $ "Port:           " ++ show (listenPort opts)
-  thServer opts
+  thServer opts sock
 
