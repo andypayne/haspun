@@ -6,7 +6,22 @@ I wrote this around 2009 and recently cleaned it up slightly to be compatible wi
 
 ## Building
 
-Grab the [Haskell Platform](http://www.haskell.org/platform/) or your choice of [GHC](http://www.haskell.org/ghc/) setup. Then:
+Grab the [Haskell Platform](http://www.haskell.org/platform/) or your choice of [GHC](http://www.haskell.org/ghc/) setup. Or install Haskell with [ghcup](https://www.haskell.org/ghcup/):
+
+```shell
+curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | sh
+```
+And install the [Haskell Tool Stack](https://haskellstack.org):
+```shell
+curl -sSL https://get.haskellstack.org/ | sh
+```
+
+Then install dependencies:
+
+```bash
+cabal install --lib network
+cabal install --lib zlib
+```
 
 ```bash
 $ ghc haspun.hs

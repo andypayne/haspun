@@ -57,10 +57,13 @@ headersToStr hh = unlines $ map joinDict hh
 thServer :: Options -> Socket -> IO ()
 thServer opts sock = do
                 -- setSocketOption sock ReuseAddr 1
-                bind sock (SockAddrInet (fromIntegral (listenPort opts)) iNADDR_ANY)
+                let hints = defaultHints {
+                                addrFlags = [AI_PASSIVE]
+                              , addrSocketType = Stream
+                            }
+                addr:_ <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just (fromIntegral (listenPort opts)))
+                bind sock (addrAddress addr)
                 listen sock 2
-                -- (listen $ PortNumber (fromIntegral (listenPort opts)))
-                -- (sClose)
                 (loop sock)
     where loop sock = accept sock >>= handle >> loop sock
           handle (h, n, p) = forkIO (serveThread (docRoot opts) h n >> hClose h)
