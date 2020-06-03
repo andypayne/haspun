@@ -1,35 +1,34 @@
-import Network.Socket
+module Main (main) where
+
 import System.IO
-import Control.Exception
-import Control.Concurrent
--- import System.Time
--- import Data.Time.Clock
--- import Data.Time.Clock.POSIX
-import Data.Time
-import System.Environment
+import Control.Concurrent (forkFinally)
+import qualified Control.Exception as E
+import Control.Monad (unless, forever, void)
+import qualified Data.ByteString as S
+import qualified Data.ByteString.Char8 as BSC
+import Network.Socket
+import Network.Socket.ByteString (recv, sendAll)
+import qualified Codec.Compression.GZip as GZip
+import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Time.Clock as Clock
+import qualified Data.Time.Calendar as Cal
+import qualified Data.Time.Format as TmFmt
 import System.Directory (doesFileExist)
-import qualified Data.ByteString.Lazy.Char8 as BS (readFile, pack, unpack, length)
-import Data.Int
-import Codec.Compression.GZip
 
-import HSOptions
-
+import HSOptions as HSO
 
 -- Given a filename, open the file, zip it, and return the contents
-zipFile inFile = do inFileContents <- BS.readFile inFile
-                    return $ compress inFileContents
-
+zipFile inFile = do inFileContents <- LBS.readFile inFile
+                    return $ GZip.compress inFileContents
 
 -- Zip a string
-zipString inString = compress inString
-
+zipString str = GZip.compress str
 
 logRequest retCode req cli = do
-  now <- getCurrentTime
+  now <- Clock.getCurrentTime
   putStrLn $ "(" ++ cli ++ ") [" ++ show now ++ "][" ++ retCode ++ "]: " ++ req
 
-
-contentTypeForFile f = case ext f of 
+contentTypeForFile f = case ext f of
                          "css"  -> "Content-Type: text/css; charset=ISO-8859-1"
                          "htm"  -> "Content-Type: text/html; charset=utf-8"
                          "html" -> "Content-Type: text/html; charset=utf-8"
@@ -44,7 +43,6 @@ contentTypeForFile f = case ext f of
                          _      -> "Content-Type: text/html; charset=ISO-8859-1"
                        where ext s = reverse $ takeWhile (/='.') $ reverse s
 
-
 type HttpHeader = [(String, String)]
 
 -- TODO: Not used
@@ -53,84 +51,78 @@ headersToStr :: HttpHeader -> String
 headersToStr hh = unlines $ map joinDict hh
                    where joinDict (k, v) = k ++ ": " ++ v
 
-
-thServer :: Options -> Socket -> IO ()
-thServer opts sock = do
-                -- setSocketOption sock ReuseAddr 1
-                let hints = defaultHints {
-                                addrFlags = [AI_PASSIVE]
-                              , addrSocketType = Stream
-                            }
-                addr:_ <- getAddrInfo (Just hints) (Just "127.0.0.1") (Just (fromIntegral (listenPort opts)))
-                bind sock (addrAddress addr)
-                listen sock 2
-                (loop sock)
-    where loop sock = accept sock >>= handle >> loop sock
-          handle (h, n, p) = forkIO (serveThread (docRoot opts) h n >> hClose h)
-
-
-serveThread documentRoot h n = do
-  reqStr <- hGetLine h
-  let filePath = (words reqStr) !! 1
-  let localFilePath = documentRoot ++ (dropWhile (=='/') filePath)
-  fileExists <- doesFileExist localFilePath
-  if fileExists then do
-    hf <- openFile localFilePath ReadMode
-    hClose hf
-    -- TODO: Check for Accept-Encoding: gzip, deflate
-    fileContents <- zipFile localFilePath
-    let fileSize = BS.length fileContents
-    let contentType = contentTypeForFile filePath
-    putHeader h "200 OK" contentType fileSize
-    hPutStr h $ BS.unpack fileContents
-    logRequest "200" reqStr n
-    hClose h
-  else do
-    let respHtml = "<!DOCTYPE html><html lang=\"en\"> \
-      \<head><title>404</title>\
-      \<style type=\"text/css\">font-family:Helvetica,Arial,sans-serif;</style>\
-      \</head><body>\
-      \<h1>404 - File not found.</h1>\
-      \<hr>\
-      \<p>The file you requested was not found.</p>\
-      \</body></html>"
-    let zrespHtml = zipString (BS.pack respHtml)
-    putHeader h "404 Not Found" "Content-Type: text/html; charset=ISO-8859-1" (fromIntegral $ BS.length zrespHtml)
-    hPutStrLn h (BS.unpack zrespHtml)
-    logRequest "404" reqStr n
-    hClose h
-
-
-putHeader :: Handle -> String -> String -> Int64 -> IO ()
-putHeader h retCode contentType fileSize = do
-  -- now <- getClockTime
-  now <- getCurrentTime
-  hPutStrLn h $ "HTTP/1.1 " ++ retCode
-  hPutStrLn h "Cache-Control: private, max-age=0"
-  hPutStrLn h "Content-Encoding: gzip"
-  hPutStrLn h $ "Date: " ++ show now
+putHeader :: Socket -> String -> String -> Int -> IO ()
+putHeader s retCode contentType fileSize = do
+  now <- Clock.getCurrentTime
+  sendPacked s $ "HTTP/1.1 " ++ retCode ++ "\n"
+  sendPacked s $ "Cache-Control: private, max-age=0\n"
+  sendPacked s $ "Content-Encoding: gzip\n"
+  sendPacked s $ "Date: " ++ show now ++ "\n"
   -- TODO: Expires header - hardcoded at 1 year from now
-  -- hPutStrLn h $ "Expires: " ++ show (timeFrom now (60*60*24*365))
-  --  parseTimeOrError True defaultTimeLocale "%Y-%M-%d" (show (addDays 365 (utctDay d))) ::UTCTime
-  hPutStrLn h $ "Expires: " ++ show (parseTimeOrError True defaultTimeLocale "%Y-%M-%d" (show (addDays 365 (utctDay now))) ::UTCTime)
-  hPutStrLn h $ contentType
-  hPutStrLn h "Accept-Ranges: bytes"
-  hPutStrLn h "Server: Haspun"
-  hPutStrLn h $ "Content-Length: " ++ (show fileSize)
-  hPutStrLn h "Connection: Close\n"
+  sendPacked s $ "Expires: " ++ show (TmFmt.parseTimeOrError True TmFmt.defaultTimeLocale "%Y-%M-%d" (show (Cal.addDays 365 (Clock.utctDay now))) ::Clock.UTCTime) ++ "\n"
+  sendPacked s $ contentType ++ "\n"
+  sendPacked s $ "Accept-Ranges: bytes" ++ "\n"
+  sendPacked s $ "Server: Haspun" ++ "\n"
+  sendPacked s $ "Content-Length: " ++ (show fileSize) ++ "\n"
+  sendPacked s $ "Connection: Close\n\n"
+  where
+    sendPacked sock str = sendAll sock (BSC.pack str)
+
+runServer :: HSO.Options -> Maybe HostName -> ServiceName -> (Socket -> IO a) -> IO a
+runServer opts mhost port server = withSocketsDo $ do
+    addr <- resolve
+    E.bracket (open addr) close loop
+  where
+    resolve = do
+      let hints = defaultHints {
+          addrFlags = [AI_PASSIVE]
+        , addrSocketType = Stream
+        }
+      head <$> getAddrInfo (Just hints) mhost (Just port)
+    open addr = do
+      sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
+      setSocketOption sock ReuseAddr 1
+      withFdSocket sock $ setCloseOnExecIfNeeded
+      bind sock $ addrAddress addr
+      listen sock 1024
+      return sock
+    loop sock = forever $ do
+      (conn, _peer) <- accept sock
+      void $ forkFinally (server conn) (const $ gracefulClose conn 5000)
 
 
-
-serveFile h documentRoot filePath = do
-  fileExists <- doesFileExist fileToServe
-  if fileExists then readFile fileToServe >>= hPutStrLn h else putStrLn "404"
-    where fileToServe = documentRoot ++ (dropWhile (=='/') filePath)
-
-
+main :: IO ()
 main = do
   opts <- setConfig
-  sock <- socket AF_INET Stream 0
-  putStrLn $ "Document Root:  " ++ (docRoot opts)
-  putStrLn $ "Port:           " ++ show (listenPort opts)
-  thServer opts sock
+  putStrLn $ "Listening on port:  " ++ show (listenPort opts)
+  runServer opts Nothing (show $ listenPort opts) serve
+  where
+    serve s = do
+      reqStr <- recv s 1024
+      unless (S.null reqStr) $ do
+        let filePath = (BSC.words reqStr) !! 1
+        -- TODO: (docRoot opts)
+        let localFilePath = "./test/docroot/" ++ (BSC.unpack (BSC.dropWhile (=='/') filePath))
+        fileExists <- doesFileExist localFilePath
+        if fileExists then do
+          -- TODO: Check for Accept-Encoding: gzip, deflate
+          fileContents <- zipFile localFilePath
+          let fileSize = LBS.length fileContents
+          let contentType = contentTypeForFile (BSC.unpack filePath)
+          putHeader s "200 OK" contentType (fromIntegral fileSize)
+          sendAll s $ S.pack (LBS.unpack fileContents)
+          logRequest "200" (takeWhile (/='\r') (BSC.unpack reqStr)) "client_id"
+        else do
+          let respHtml = "<!DOCTYPE html><html lang=\"en\"> \
+            \<head><title>404</title>\
+            \<style type=\"text/css\">* { font-family:Helvetica,sans-serif; }</style>\
+            \</head><body>\
+            \<h1>404 - File not found.</h1>\
+            \<hr>\
+            \<p>The file you requested was not found.</p>\
+            \</body></html>"
+          let zrespHtml = zipString (LBS.fromChunks [(BSC.pack respHtml)])
+          putHeader s "404 Not Found" "Content-Type: text/html; charset=ISO-8859-1" (fromIntegral $ LBS.length zrespHtml)
+          sendAll s $ S.pack (LBS.unpack zrespHtml)
+          logRequest "404" (BSC.unpack reqStr) "client_id"
 
